@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         少前2bbs自动兑换物品脚本
 // @namespace    http://tampermonkey.net/
-// @version      1.2.1
-// @description  一个简单的少前2论坛自动兑换物品脚本(包括签到)；当因登录凭证过期时，可根据提供的账号密码自动登录(可选)；其中，若提供账号，则需要启用油猴插件"允许访问文件网址"权限，这是读取文件接口GM_getResourceText()的硬性要求，具体账号配置请查看文档。以chrome为例，浏览器右上角"更多设置(三点)" -> "拓展程序" -> "管理拓展程序" -> "篡改猴" -> "详情" -> "允许访问文件网址" -> 启用；此外，本脚本还提供了服务器版本，如有需要，可前往仓库(https://github.com/virtua1nova/gf2-bbs-claimer/blob/master/gf2-bbs-claimer-for-server.js)获取。
+// @version      1.2.3
+// @description  一个简单的少前2论坛自动兑换物品脚本(包括签到)；当因登录凭证过期时，可根据提供的账号密码自动登录(可选)；其中，若提供账号，则需要启用油猴插件"允许访问文件网址"权限，这是读取文件接口GM_getResourceText()的硬性要求，具体账号配置请查看文档。以chrome为例，浏览器右上角"更多设置(三点)" -> "拓展程序" -> "管理拓展程序" -> "篡改猴" -> "详情" -> "允许访问文件网址" -> 启用。
 // @author       virtual___nova@outlook.com
 // @match        https://gf2-bbs.exiliumgf.com/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=exiliumgf.com
@@ -20,6 +20,7 @@
     log(`开始执行${SCRIPT_NAME}...`);
     const states = {};
     const PERFORMED = "performed", SIGNED = "signed", EXCHANGED = "exchanged";
+    // let uid = getUid();
     if ((states[SIGNED] = getKey(SIGNED)) && (states[PERFORMED] = getKey(PERFORMED)) && (states[EXCHANGED] = getKey(EXCHANGED))) {
         log('今日已执行.');
         return;
@@ -56,6 +57,15 @@
         }
         return "";
     }
+    // function getUid() {
+    //     let uid = "";
+    //     let userInfo = localStorage.getItem("userInfo");
+    //     if (userInfo) {
+    //         userInfo = JSON.parse(userInfo);
+    //         uid = userInfo.game_uid;
+    //     }
+    //     return uid;
+    // }
     // 账号登录；返回一个令牌
     async function login(account, password) {
         if (!account || !password) {
@@ -246,7 +256,8 @@
                 pending[item.task_name] = "1";
             }
         }
-        if (!Object.keys(pending).length) {
+        const keys = Object.keys(pending);
+        if (!keys.length) {
             results[PERFORMED] = setKey(PERFORMED);
             console.log('今日已完成任务');
             return results;
@@ -259,16 +270,20 @@
         }
         const _posts = filtered.slice(0, 3);
         pending[TASK_1] && (pending[TASK_1] = task1(token, _posts));
-        pending[TASK_3] && (pending[TASK_3] = task3(token, _posts));
         pending[TASK_2] && (pending[TASK_2] = task2(token, _posts));
-        const [a=null, b=null, c=null] = await Promise.all(Object.values(pending));
-        results[TASK_1] = a;
-        results[TASK_3] = b;
-        results[TASK_2] = c;
-        [...a, ...b, c].every(successful) && setKey(PERFORMED);
+        pending[TASK_3] && (pending[TASK_3] = task3(token, _posts));
+        const responses = await Promise.all(Object.values(pending));
+
+        for (let i=0; i<keys.length; i++) {
+            const key = keys[i];
+            const resp = responses[i];
+            results[key] = resp;
+        }
+        responses
+            .flat()
+            .every(successful) && setKey(PERFORMED);
         return results;
     }
-    // 更新节点(签到成功后)；pc貌似有点问题，即使刷新页面，文字也依旧不变；
     function updateNodeForSigning() {
         const selector = location.pathname.startsWith("/m") ? '.nav_con div:first-child' : '.btns .btn';
         const node = document.querySelector(selector) || { failed: true };
@@ -306,9 +321,7 @@
         });
     }
     // 获取用户信息(其实是用于检查令牌是否有效)；
-    // 测试发现，只要令牌未过期，都可获取到数据，即可存在多个令牌（服务器不记录状态）；
     // 当response.status为401时，表示令牌过期；
-    // 更新判断方式；
     async function checkToken(token) {
         const payload = JSON.parse(atob(token.split(".")[1]));
         return (payload.exp - (Date.now() / 1000)) > config.threshold;
@@ -649,9 +662,9 @@
     function getToken() {
         return localStorage.getItem('key') || "";
     }
-    function clearToken() {
-        return localStorage.removeItem('key');
-    }
+    // function clearToken() {
+    //     return localStorage.removeItem('key');
+    // }
     // 等待登录；
     // 通过监听url的变化，当检测到从/login、/loading路径跳转时，尝试获取令牌进行判断（不提供账号密码时才会调用该方法）
     function waitingForLogin() {
@@ -685,22 +698,19 @@
         waitingForLogin();
     }
     setTimeout(() => {
-        let token;
-        // 令牌不存在或过期时，进行登录；但若不提供配置时，则由用户自己进行
-        if ((token = getToken())) {
+        let token = getToken();
+        // 令牌不存在或过期时，进行登录；若不提供配置时，由用户自己进行
+        if (token) {
             notice2(config);
             checkToken(token)
                 .then(async valid => {
                     if (!valid) {
-                        // 移除过期令牌
-                        clearToken();
                         if (configPathNotEmpty) {
                             token = await login(config.account, config.password);
                             saveToken(token);
                         }
                         else {
                             notice('请重新登录.', 3000);
-                            // log(`${SCRIPT_NAME}执行完成.`);
                             console.warn(`令牌已过期，等待重新登录...`);
                             waitingForLogin();
                             return;

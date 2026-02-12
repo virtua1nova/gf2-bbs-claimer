@@ -229,7 +229,8 @@ async function performTask(token, performed) {
             pending[item.task_name] = "1";
         }
     }
-    if (!Object.keys(pending).length) {
+    const keys = Object.keys(pending);
+    if (!keys.length) {
         results[PERFORMED] = setKey(PERFORMED);
         console.log('今日已完成任务');
         return results;
@@ -242,13 +243,18 @@ async function performTask(token, performed) {
     }
     const _posts = filtered.slice(0, 3);
     pending[TASK_1] && (pending[TASK_1] = task1(token, _posts));
-    pending[TASK_3] && (pending[TASK_3] = task3(token, _posts));
     pending[TASK_2] && (pending[TASK_2] = task2(token, _posts));
-    const [a=null, b=null, c=null] = await Promise.all(Object.values(pending));
-    results[TASK_1] = a;
-    results[TASK_3] = b;
-    results[TASK_2] = c;
-    [...a, ...b, c].every(successful) && setKey(PERFORMED);
+    pending[TASK_3] && (pending[TASK_3] = task3(token, _posts));
+    const responses = await Promise.all(Object.values(pending));
+
+    for (let i=0; i<keys.length; i++) {
+        const key = keys[i];
+        const resp = responses[i];
+        results[key] = resp;
+    }
+    responses
+        .flat()
+        .every(successful) && setKey(PERFORMED);
     return results;
 }
 async function runner(token, states) {
