@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         少前2bbs自动兑换物品脚本
 // @namespace    http://tampermonkey.net/
-// @version      1.2.3
+// @version      1.2.4
 // @description  一个简单的少前2论坛自动兑换物品脚本(包括签到)；当因登录凭证过期时，可根据提供的账号密码自动登录(可选)；其中，若提供账号，则需要启用油猴插件"允许访问文件网址"权限，这是读取文件接口GM_getResourceText()的硬性要求，具体账号配置请查看文档。以chrome为例，浏览器右上角"更多设置(三点)" -> "拓展程序" -> "管理拓展程序" -> "篡改猴" -> "详情" -> "允许访问文件网址" -> 启用。
 // @author       virtual___nova@outlook.com
 // @match        https://gf2-bbs.exiliumgf.com/*
@@ -20,7 +20,6 @@
     log(`开始执行${SCRIPT_NAME}...`);
     const states = {};
     const PERFORMED = "performed", SIGNED = "signed", EXCHANGED = "exchanged";
-    // let uid = getUid();
     if ((states[SIGNED] = getKey(SIGNED)) && (states[PERFORMED] = getKey(PERFORMED)) && (states[EXCHANGED] = getKey(EXCHANGED))) {
         log('今日已执行.');
         return;
@@ -57,15 +56,6 @@
         }
         return "";
     }
-    // function getUid() {
-    //     let uid = "";
-    //     let userInfo = localStorage.getItem("userInfo");
-    //     if (userInfo) {
-    //         userInfo = JSON.parse(userInfo);
-    //         uid = userInfo.game_uid;
-    //     }
-    //     return uid;
-    // }
     // 账号登录；返回一个令牌
     async function login(account, password) {
         if (!account || !password) {
@@ -339,18 +329,22 @@
         notice3(config);
     }
     function removeNotification(node, delay) {
-        return new Promise(resolve => {
+        if (!delay || delay < 100) {
+            delay = 100;
+        }
+        setTimeout(() => {
+            node.style.top = "-199px";
             setTimeout(() => {
-                node.style.top = "-199px";
-                setTimeout(() => {
-                    node.remove();
-                    resolve();
-                }, 50);
-            }, delay);
-        })
+                node.remove();
+            }, 50);
+        }, delay);
     }
-    async function notice(message, duration, _delay=50) {
-        _node && await removeNotification(_node, 1000);
+    function notice(message, duration, _delay=50) {
+        if (_node) {
+            let delay4preNode = 100;
+            removeNotification(_node, delay4preNode);
+            _delay += delay4preNode * 1.1;
+        }
         const node = document.createElement("div");
         _node = node;
         const head = document.querySelector('.head') || { clientHeight: 60, failed: true };
@@ -369,7 +363,6 @@
             callback = () => {
                 node.style.top = "0";
                 removeNotification(node, duration);
-                _node = null;
             };
         }
         else {
@@ -377,11 +370,21 @@
                 node.style.top = "0";
             };
         }
-        setTimeout(callback, _delay)
+        setTimeout(callback, _delay);
+
+        if (notice.timer1) {
+            clearTimeout(notice.timer1);
+        }
+        notice.timer1 = setTimeout(() => {
+            if (_node && _node.style.top?.startsWith("-")) {
+                _node = null;
+            }
+            notice.timer1 = null;
+        }, 4000);
     }
     function notice1(config) {
         if (+config.notification) {
-            notice(`脚本执行完成.`, 3000);
+            notice(`脚本执行完成`, 3000);
         }
     }
     function notice2(config) {
@@ -391,7 +394,7 @@
     }
     function notice3(config) {
         if (+config.notification) {
-            notice(`脚本执行出现错误.`, 3000);
+            notice(`脚本执行出现错误`, 3000);
         }
     }
     // -----------------加密相关(无需理会)-----------------
@@ -662,9 +665,6 @@
     function getToken() {
         return localStorage.getItem('key') || "";
     }
-    // function clearToken() {
-    //     return localStorage.removeItem('key');
-    // }
     // 等待登录；
     // 通过监听url的变化，当检测到从/login、/loading路径跳转时，尝试获取令牌进行判断（不提供账号密码时才会调用该方法）
     function waitingForLogin() {
@@ -681,7 +681,7 @@
                     notice2(config);
                     runner(token, {})
                         .then(() => {
-                            log(`${SCRIPT_NAME}执行完成.`);
+                            log(`${SCRIPT_NAME}执行完成`);
                             notice1(config);
                             window.removeEventListener('urlchange', handler);
                         })
@@ -701,7 +701,6 @@
         let token = getToken();
         // 令牌不存在或过期时，进行登录；若不提供配置时，由用户自己进行
         if (token) {
-            notice2(config);
             checkToken(token)
                 .then(async valid => {
                     if (!valid) {
@@ -710,14 +709,35 @@
                             saveToken(token);
                         }
                         else {
-                            notice('请重新登录.', 3000);
+                            // 只在首页提示，且每日限制次数
+                            const DAILY_NOTIFICATION = "daily_notification";
+                            const dailyNotification = localStorage.getItem(DAILY_NOTIFICATION);
+                            let isNotice = true;
+                            let expiration, count = 0;
+                            let date = new Date();
+                            if (dailyNotification) {
+                                [expiration, count] = dailyNotification.split(":").map(item => Number(item));
+                                // 先比较时间，其次是次数
+                                if (date.getTime() > expiration || count >= 3) {
+                                    isNotice = false;
+                                }
+                            }
+                            if (isNotice) {
+                                const pathname = location.pathname;
+                                const patterns = ['/', '/m/'];
+                                if (patterns.includes(pathname)) {
+                                    localStorage.setItem(DAILY_NOTIFICATION, `${expiration || date.setHours(24, 0, 0, 0)}:${++count}`);
+                                    notice('请重新登录', 3000);
+                                }
+                            }
                             console.warn(`令牌已过期，等待重新登录...`);
                             waitingForLogin();
                             return;
                         }
                     }
+                    notice2(config);
                     await runner(token, states);
-                    log(`${SCRIPT_NAME}执行完成.`);
+                    log(`${SCRIPT_NAME}执行完成`);
                     notice1(config);
                 })
                 .catch(errorHandler);
@@ -728,13 +748,13 @@
                 .then(async token => {
                     saveToken(token);
                     await runner(token, states);
-                    log(`${SCRIPT_NAME}执行完成.`);
+                    log(`${SCRIPT_NAME}执行完成`);
                     notice1(config);
                 })
                 .catch(errorHandler);
         }
         else {
-            log(`由于令牌已过期，且未提供配置文件，或当前为移动端环境，本次未执行任何有效动作.`, 'warn');
+            log(`由于令牌已过期，且未提供配置文件，或当前为移动端环境，本次未执行任何有效动作`, 'warn');
             console.warn(`尝试等待登录...`);
             waitingForLogin();
         }
